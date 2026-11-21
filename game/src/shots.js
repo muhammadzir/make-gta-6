@@ -32,6 +32,9 @@
       return;
     }
     // start: title screen, nothing to do — the orbit camera is already running.
+// chase holds W for 6 s so the patrol cars catch up and ram; play holds it 5 s
+// so the frame shows Rico driving, not parked. end teleports to the safehouse
+// corner, pays out the last mission and completes the story on the spot.
   }
   window.SB3Shots = { stage: stage };
 })();

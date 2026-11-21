@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="icon" href="data:,">
+<meta name="description" content="Solmar Bay: an original 3D third-person open-world crime game on a sunset volcanic island. Walk, drive, run missions, recruit a crew and lose the police.">
 <title>Solmar Bay 3D — an open-world crime game</title>
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; background: #1a1210; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; color: #f2f0e8; }
@@ -47,6 +48,8 @@
 <canvas id="game" aria-label="Solmar Bay 3D: an open-world crime game. Drive, steal cars, run missions and lose the police on a volcanic island city."></canvas>
 <div id="ui"></div>
 <p id="status" role="status" aria-live="polite"></p>
+<!-- Load order matters: Three.js first, then the config/audio/world/game
+     modules in dependency order, then the screenshot stager, then the boot. -->
 <script src="./vendor/three.min.js"></script>
 <script src="./src/config.js"></script>
 <script src="./src/audio.js"></script>

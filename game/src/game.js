@@ -5,8 +5,8 @@
   'use strict';
   var C = window.SB3;
   var THREE = window.THREE;
-  var SAVE_PREFIX = 'solmar-bay-3d.save.';
-  var BEST_KEY = 'solmar-bay-3d.best';
+  var SAVE_PREFIX = 'solmar-bay-3d.save.'; // three localStorage slots: slot 1, 2 or 3 appended to this prefix
+  var BEST_KEY = 'solmar-bay-3d.best'; // best money ever held, shown on the title screen
 
   function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
   function dist2(ax, az, bx, bz) { var dx = ax - bx, dz = az - bz; return Math.sqrt(dx * dx + dz * dz); }

@@ -7,7 +7,7 @@
   var C = window.SB3;
   var THREE = window.THREE;
 
-  function mulberry32(seed) {
+  function mulberry32(seed) { // deterministic RNG: the same seed always builds the same city, so ?seed=N screenshots reproduce
     var a = seed >>> 0;
     return function () {
       a |= 0; a = (a + 0x6D2B79F5) | 0;

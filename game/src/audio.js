@@ -6,7 +6,7 @@
   var ctx = null, master = null, musicGain = null, sfxGain = null;
   var muted = false, engineOsc = null, engineGain = null;
   var musicTimer = null, musicStep = 0, musicVol = 0.6, sfxVol = 0.8;
-  var BASS = [55, 0, 65.4, 0, 49, 0, 58.3, 73.4];
+  var BASS = [55, 0, 65.4, 0, 49, 0, 58.3, 73.4]; // bass loop: A1, rest, C2, rest, G1, rest, A#1, D2 — stepped every 240 ms so the groove stays under the effects
   function ensure() {
     if (ctx) return true;
     try {

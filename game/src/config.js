@@ -5,7 +5,7 @@
   'use strict';
 
   var WORLD = 1200; // world is WORLD x WORLD, centred on (0,0), ground y = 0
-  var ROAD_STEP = 150;
+  var ROAD_STEP = 150; // roads run every 150 units; each district square is 440 wide, centred on a road crossing
   var ROADS = [-450, -300, -150, 0, 150, 300, 450];
 
   // 7 districts, each with a standing score 0..100 and a state name.

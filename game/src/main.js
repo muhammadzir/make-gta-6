@@ -11,7 +11,7 @@
   var canvas = document.getElementById('game');
   var world3d = window.SB3World.create(canvas, 'Medium');
   var game = window.SB3Game.create(canvas, world3d, window.SB3Audio);
-  window.SOLMAR = game;
+  window.SOLMAR = game; // debug and screenshot handle: playtests drive the game through this object
   window.__gameReady = true;
 
   if (shot) {
