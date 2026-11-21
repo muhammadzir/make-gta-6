@@ -1,375 +1,275 @@
-// Solmar Bay's rules and state, with no drawing and no browser in it:
-// the player on foot and in cars, traffic, pedestrians, police, wanted
-// level, combat, pickups, missions and saving. step() advances one fixed
-// step and returns what happened as bit flags, so the caller can react
-// without the world knowing about screens or sound.
-import { WORLD, PLAYER, CAR, TRAFFIC_COUNT, PED_COUNT, POLICE_MAX, WANTED, SAVE_KEY, PALETTE } from './config.js';
-import { createCity, isRoad, snapToRoad, collidesBuilding, clampWorld, ROADS_X, ROADS_Y } from './city.js';
-import { createMissions } from './missions.js';
-import { createAudio } from './audio.js';
+// Solmar Bay 3D — the Three.js world. Builds the low-poly island city
+// (roads, named buildings and shops, palms, beach, sea, volcano), the
+// meshes for people and cars, and the collision boxes. All original art:
+// boxes, cones and canvas-texture signs made in code, no loaded models.
+(function () {
+  'use strict';
+  var C = window.SB3;
+  var THREE = window.THREE;
 
-export const EVENT_HIT = 1;
-export const EVENT_COIN = 2;
-export const EVENT_OVER = 4;
-export const EVENT_MISSION = 8;
-export const EVENT_BUSTED = 16;
-
-function dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
-function angleTo(a, b) { return Math.atan2(b.y - a.y, b.x - a.x); }
-
-export function createWorld(random, audio) {
-  const city = createCity(random);
-  const missions = createMissions(city.landmarks);
-  const world = {
-    city, missions, audio: audio || createAudio(),
-    player: { x: 180, y: 220, angle: 0, health: PLAYER.health, ammo: PLAYER.ammo, fireCooldown: 0, invulnerable: 0 },
-    cars: [], peds: [], police: [], enemies: [], bullets: [], pickups: [], effects: [],
-    money: 0, wanted: 0, inCar: false, car: null, elapsed: 0,
-    message: '', messageTime: 0, flash: '', storyDone: false,
-    busted: false, over: false, policeTimer: 0, pickupTimer: 4, sirenTimer: 0,
-  };
-
-  function makeCar(x, y, police) {
-    const snapped = snapToRoad(x, y);
-    return {
-      x: snapped.x, y: snapped.y, angle: snapped.axis === 'v' ? (random.chance(0.5) ? Math.PI / 2 : -Math.PI / 2) : (random.chance(0.5) ? 0 : Math.PI),
-      speed: random.range(120, 220), color: police ? PALETTE.copCar : random.pick(PALETTE.car),
-      health: CAR.health, police: !!police, driver: !police, w: 46, h: 22, turnAt: 0,
+  function mulberry32(seed) {
+    var a = seed >>> 0;
+    return function () {
+      a |= 0; a = (a + 0x6D2B79F5) | 0;
+      var t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
     };
   }
-  function spawnTraffic() {
-    world.cars = [];
-    for (let i = 0; i < TRAFFIC_COUNT; i += 1) {
-      world.cars.push(makeCar(random.range(200, WORLD.width - 200), random.range(200, WORLD.height - 800), false));
-    }
-    // A few parked cars near the lockup for mission 1, facing east along
-    // the road — a car facing west needs a U-turn on a 96 px road and
-    // swings off it into the buildings.
-    for (let i = 0; i < 4; i += 1) {
-      const parked = makeCar(360 + i * 90, 180, false);
-      parked.angle = 0; parked.speed = 0;
-      world.cars.push(parked);
-    }
+  function pick(rng, arr) { return arr[Math.floor(rng() * arr.length)]; }
+
+  function textTexture(text, bg, fg, w, h) {
+    var cv = document.createElement('canvas'); cv.width = w || 256; cv.height = h || 64;
+    var g = cv.getContext('2d');
+    g.fillStyle = bg; g.fillRect(0, 0, cv.width, cv.height);
+    g.fillStyle = fg; g.font = 'bold 34px system-ui, sans-serif';
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText(text, cv.width / 2, cv.height / 2 + 2);
+    var tx = new THREE.CanvasTexture(cv); tx.anisotropy = 4; return tx;
   }
-  function spawnPeds() {
-    world.peds = [];
-    for (let i = 0; i < PED_COUNT; i += 1) {
-      world.peds.push({
-        x: random.range(100, WORLD.width - 100), y: random.range(100, WORLD.height - 700),
-        angle: random.range(0, Math.PI * 2), speed: random.range(30, 70),
-        color: random.pick(['#d95a8c', '#5ad9a0', '#d9c25a', '#7a9cd9', '#e8e8e8']),
-        flee: 0, alive: true, walkPhase: random.range(0, 6),
+  function box(w, h, d, color, x, y, z, opts) {
+    var m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d),
+      new THREE.MeshLambertMaterial({ color: color }));
+    m.position.set(x, y, z);
+    if (opts) { if (opts.ry) m.rotation.y = opts.ry; if (opts.rx) m.rotation.x = opts.rx; }
+    m.castShadow = true; m.receiveShadow = true;
+    return m;
+  }
+
+  function createWorld3D(canvas, quality) {
+    var renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, quality === 'High' ? 2 : 1.25));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.shadowMap.enabled = quality !== 'Low';
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+    var scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xff9e5e); // sunset sky
+    scene.fog = new THREE.Fog(0xff9e5e, 260, 900);
+    var camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.1, 2000);
+
+    // Sunset lighting: warm sun low in the west, soft sky fill.
+    var sun = new THREE.DirectionalLight(0xffb36b, 1.15);
+    sun.position.set(-300, 180, 120); sun.castShadow = true;
+    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.camera.left = -650; sun.shadow.camera.right = 650;
+    sun.shadow.camera.top = 650; sun.shadow.camera.bottom = -650;
+    sun.shadow.camera.far = 1200;
+    scene.add(sun);
+    scene.add(new THREE.HemisphereLight(0xffd9a0, 0x3a5a7a, 0.75));
+    var sunBall = new THREE.Mesh(new THREE.SphereGeometry(28, 16, 16),
+      new THREE.MeshBasicMaterial({ color: 0xffe9a8, fog: false }));
+    sunBall.position.set(-520, 120, 260); scene.add(sunBall);
+
+    var rng = mulberry32(1337);
+    var colliders = []; // {x, z, hw, hd}
+    var buildingColors = ['#7a5a8c', '#8c6a4a', '#4a7a8c', '#9c7a5a', '#5a6b8c', '#b08a4a', '#6b8c5a', '#8c4a5a'];
+    var roofColors = ['#3a2f4a', '#4a3a2f', '#2f4a3a', '#5a4a2f'];
+
+    // Ground: grass island, sand beach ring on the south, sea beyond.
+    var ground = new THREE.Mesh(new THREE.PlaneGeometry(1400, 1400),
+      new THREE.MeshLambertMaterial({ color: 0x4a8c4a }));
+    ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground);
+    var sand = new THREE.Mesh(new THREE.PlaneGeometry(1400, 130),
+      new THREE.MeshLambertMaterial({ color: 0xd9c27a }));
+    sand.rotation.x = -Math.PI / 2; sand.position.set(0, 0.05, 560); sand.receiveShadow = true; scene.add(sand);
+    var sea = new THREE.Mesh(new THREE.PlaneGeometry(2400, 500),
+      new THREE.MeshLambertMaterial({ color: 0x1d6f8f }));
+    sea.rotation.x = -Math.PI / 2; sea.position.set(0, -0.4, 850); scene.add(sea);
+
+    // Roads: dark strips on the grid, with centre dashes.
+    var roadMat = new THREE.MeshLambertMaterial({ color: 0x2b2f38 });
+    var dashMat = new THREE.MeshLambertMaterial({ color: 0xc9a227 });
+    C.ROADS.forEach(function (r) {
+      var h = new THREE.Mesh(new THREE.PlaneGeometry(1200, 14), roadMat);
+      h.rotation.x = -Math.PI / 2; h.position.set(0, 0.08, r); h.receiveShadow = true; scene.add(h);
+      var v = new THREE.Mesh(new THREE.PlaneGeometry(14, 1200), roadMat);
+      v.rotation.x = -Math.PI / 2; v.position.set(r, 0.08, 0); v.receiveShadow = true; scene.add(v);
+      for (var d = -540; d <= 540; d += 60) {
+        var dh = new THREE.Mesh(new THREE.PlaneGeometry(18, 1.2), dashMat);
+        dh.rotation.x = -Math.PI / 2; dh.position.set(d, 0.12, r); scene.add(dh);
+        var dv = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 18), dashMat);
+        dv.rotation.x = -Math.PI / 2; dv.position.set(r, 0.12, d); scene.add(dv);
+      }
+    });
+
+    // Volcano in the north-east corner, smoking.
+    var volcano = new THREE.Mesh(new THREE.ConeGeometry(150, 170, 8),
+      new THREE.MeshLambertMaterial({ color: 0x5a4a42 }));
+    volcano.position.set(460, 85, -460); volcano.castShadow = true; scene.add(volcano);
+    var crater = new THREE.Mesh(new THREE.ConeGeometry(60, 40, 8),
+      new THREE.MeshLambertMaterial({ color: 0x2b2b2b }));
+    crater.position.set(460, 175, -460); scene.add(crater);
+    var lava = new THREE.Mesh(new THREE.CircleGeometry(34, 12),
+      new THREE.MeshBasicMaterial({ color: 0xff6a2a }));
+    lava.rotation.x = -Math.PI / 2; lava.position.set(460, 196, -460); scene.add(lava);
+    var smoke = new THREE.Mesh(new THREE.SphereGeometry(26, 10, 10),
+      new THREE.MeshLambertMaterial({ color: 0x888888, transparent: true, opacity: 0.55 }));
+    smoke.position.set(460, 230, -460); scene.add(smoke);
+
+    // Buildings in the blocks between roads, never on a road.
+    var shopSigns = {};
+    function addBuilding(x, z, w, d, h, color, signText) {
+      var b = box(w, h, d, color, x, h / 2, z);
+      scene.add(b);
+      var roof = box(w + 2, 2, d + 2, pick(rng, roofColors), x, h + 1, z);
+      scene.add(roof);
+      colliders.push({ x: x, z: z, hw: w / 2 + 1, hd: d / 2 + 1 });
+      if (signText) {
+        var sign = new THREE.Mesh(new THREE.PlaneGeometry(34, 8),
+          new THREE.MeshBasicMaterial({ map: textTexture(signText, '#20242e', '#ffcf3a') }));
+        sign.position.set(x, h + 6, z + d / 2 + 0.6); scene.add(sign);
+        shopSigns[signText] = sign;
+      }
+      return b;
+    }
+    // Named shops (positions match config SHOPS). All sit inside a block
+    // (midpoints between road lines), never on a road or an intersection.
+    addBuilding(60, -60, 40, 30, 16, '#8c6a4a', "LENA'S GARAGE");
+    addBuilding(225, -75, 36, 28, 20, '#5a6b8c', "BRAM'S ARMS");
+    addBuilding(-225, 75, 36, 28, 14, '#7a5a8c', 'SOL RESPRAY');
+    addBuilding(-380, 380, 44, 30, 18, '#4a7a8c', 'BOATWORKS');
+    addBuilding(-330, 30, 34, 26, 14, '#9c7a5a', 'CORAL CAFE');
+    addBuilding(225, 225, 30, 30, 26, '#8c4a5a', 'SOLMAR VAULT');
+    addBuilding(-420, 420, 36, 28, 14, '#6b8c5a', 'HIDEOUT');
+    // Fill the rest of the blocks with buildings. Block centres are the
+    // midpoints between road lines (roads at -450..450 step 150), so no
+    // building ever stands on a road.
+    var blockCenters = [];
+    [-525, -375, -225, -75, 75, 225, 375, 525].forEach(function (bx) {
+      [-525, -375, -225, -75, 75, 225, 375, 525].forEach(function (bz) {
+        blockCenters.push([bx, bz]);
       });
+    });
+    blockCenters.forEach(function (c) {
+      var nearShop = C.SHOPS.some(function (s) { return Math.hypot(s.x - c[0], s.z - c[1]) < 60; });
+      if (nearShop) return;
+      if (c[0] > 380 && c[1] < -380) return; // volcano plot
+      if (rng() < 0.25) return; // some blocks stay open (parks / parking)
+      var w = 34 + rng() * 26, d = 30 + rng() * 24, h = 10 + rng() * 34;
+      addBuilding(c[0], c[1], w, d, h, pick(rng, buildingColors), null);
+    });
+
+    // Palm trees along the beach and scattered in parks.
+    function palm(x, z) {
+      var g = new THREE.Group();
+      var trunk = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 2, 16, 6),
+        new THREE.MeshLambertMaterial({ color: 0x8c6a4a }));
+      trunk.position.y = 8; trunk.castShadow = true; g.add(trunk);
+      for (var i = 0; i < 5; i++) {
+        var leaf = new THREE.Mesh(new THREE.ConeGeometry(2.2, 12, 4),
+          new THREE.MeshLambertMaterial({ color: 0x3f7d4a }));
+        var a = (i / 5) * Math.PI * 2;
+        leaf.position.set(Math.cos(a) * 4, 17, Math.sin(a) * 4);
+        leaf.rotation.z = Math.cos(a) * 0.9; leaf.rotation.x = -Math.sin(a) * 0.9;
+        g.add(leaf);
+      }
+      g.position.set(x, 0, z); scene.add(g); return g;
     }
-  }
-  function spawnPickup(kind, x, y) {
-    world.pickups.push({ kind, x, y, t: 0 });
-  }
-  function spawnEnemies(n, at) {
-    for (let i = 0; i < n; i += 1) {
-      world.enemies.push({
-        x: at.x + random.range(-120, 120), y: at.y + random.range(-120, 120),
-        angle: 0, health: 60, fireCooldown: random.range(0.5, 1.5), alive: true, speed: 150,
+    for (var px = -540; px <= 540; px += 90) palm(px + (rng() * 20 - 10), 520 + rng() * 30);
+    for (var pi = 0; pi < 26; pi++) palm(-540 + rng() * 1080, -540 + rng() * 1000);
+
+    // Stunt jump ramps (orange wedges).
+    var ramps = [];
+    C.JUMPS.forEach(function (j) {
+      var ramp = new THREE.Mesh(new THREE.BoxGeometry(16, 2, 22),
+        new THREE.MeshLambertMaterial({ color: 0xe87a2a }));
+      ramp.position.set(j.x, 2, j.z); ramp.rotation.y = j.a; ramp.rotation.x = -0.35;
+      ramp.castShadow = true; scene.add(ramp); ramps.push(ramp);
+    });
+
+    // Golden Shell collectibles (glowing spheres, bobbing).
+    var shells = [];
+    for (var si = 0; si < 20; si++) {
+      var sx = -500 + rng() * 1000, sz = -500 + rng() * 1000;
+      var sh = new THREE.Mesh(new THREE.SphereGeometry(2.2, 10, 10),
+        new THREE.MeshBasicMaterial({ color: 0xffd94c }));
+      sh.position.set(sx, 3, sz); scene.add(sh);
+      shells.push({ mesh: sh, x: sx, z: sz, taken: false, phase: rng() * 6 });
+    }
+
+    // Mission waypoint beacon: a tall yellow pillar + ground ring.
+    var beacon = new THREE.Mesh(new THREE.CylinderGeometry(3, 3, 90, 12, 1, true),
+      new THREE.MeshBasicMaterial({ color: 0xffcf3a, transparent: true, opacity: 0.35, side: THREE.DoubleSide, depthWrite: false }));
+    beacon.position.set(0, 45, 0); beacon.visible = false; scene.add(beacon);
+    var ring = new THREE.Mesh(new THREE.RingGeometry(6, 9, 24),
+      new THREE.MeshBasicMaterial({ color: 0xffcf3a, transparent: true, opacity: 0.8, side: THREE.DoubleSide }));
+    ring.rotation.x = -Math.PI / 2; ring.position.set(0, 0.3, 0); ring.visible = false; scene.add(ring);
+
+    // Race checkpoint rings (reused per race).
+    var checkpoints = [];
+    for (var ci = 0; ci < 5; ci++) {
+      var cp = new THREE.Mesh(new THREE.TorusGeometry(9, 1.2, 8, 24),
+        new THREE.MeshBasicMaterial({ color: 0x4cc2e8 }));
+      cp.position.set(0, 5, 0); cp.visible = false; scene.add(cp); checkpoints.push(cp);
+    }
+
+    function collides(x, z, r) {
+      if (Math.abs(x) > 580 || Math.abs(z) > 580) return true;
+      for (var i = 0; i < colliders.length; i++) {
+        var c = colliders[i];
+        if (Math.abs(x - c.x) < c.hw + r && Math.abs(z - c.z) < c.hd + r) return true;
+      }
+      return false;
+    }
+    function nearestRoad(v) {
+      var best = C.ROADS[0];
+      for (var i = 1; i < C.ROADS.length; i++) if (Math.abs(C.ROADS[i] - v) < Math.abs(best - v)) best = C.ROADS[i];
+      return best;
+    }
+
+    // --- Mesh factories for moving things ---
+    function makeCarMesh(color, police) {
+      var g = new THREE.Group();
+      var body = box(4.4, 1.4, 9, color, 0, 1.1, 0);
+      var cabin = box(3.6, 1.2, 4.4, police ? '#e8e8e8' : '#20242e', 0, 2.3, -0.4);
+      g.add(body); g.add(cabin);
+      var wheelGeo = new THREE.CylinderGeometry(1, 1, 0.8, 10);
+      var wheelMat = new THREE.MeshLambertMaterial({ color: 0x141414 });
+      [[-2.1, 3], [2.1, 3], [-2.1, -3], [2.1, -3]].forEach(function (p) {
+        var w = new THREE.Mesh(wheelGeo, wheelMat);
+        w.rotation.z = Math.PI / 2; w.position.set(p[0], 1, p[1]); g.add(w);
       });
-    }
-  }
-  function addEffect(x, y, kind) { world.effects.push({ x, y, kind, t: 0 }); }
-  function addWanted(n) {
-    world.wanted = Math.min(5, world.wanted + n);
-    if (world.wanted > 0) world.messageTime = 3;
-  }
-  function save() {
-    try {
-      window.localStorage.setItem(SAVE_KEY, JSON.stringify({
-        money: world.money, missionIndex: missions.index, missionStage: missions.stage,
-        health: world.player.health, x: world.player.x, y: world.player.y, storyDone: world.storyDone,
-      }));
-    } catch { /* storage off: progress lasts this visit only */ }
-  }
-  function load() {
-    try {
-      const raw = window.localStorage.getItem(SAVE_KEY);
-      if (!raw) return false;
-      const s = JSON.parse(raw);
-      world.money = s.money || 0; missions.index = s.missionIndex || 0; missions.stage = s.missionStage || 0;
-      world.player.health = s.health || PLAYER.health;
-      if (s.x) { world.player.x = s.x; world.player.y = s.y; }
-      world.storyDone = !!s.storyDone; missions.done = world.storyDone;
-      return true;
-    } catch { return false; }
-  }
-  function reset() {
-    world.player.x = 180; world.player.y = 220; world.player.angle = 0;
-    world.player.health = PLAYER.health; world.player.ammo = PLAYER.ammo;
-    world.player.fireCooldown = 0; world.player.invulnerable = 0;
-    world.money = 0; world.wanted = 0; world.inCar = false; world.car = null;
-    world.elapsed = 0; world.busted = false; world.over = false;
-    world.message = ''; world.flash = ''; world.storyDone = false;
-    world.bullets = []; world.effects = []; world.pickups = []; world.enemies = []; world.police = [];
-    missions.index = 0; missions.stage = 0; missions.done = false; missions.defeated = 0;
-    spawnTraffic(); spawnPeds();
-    spawnPickup('cash', 540, 540); spawnPickup('health', 900, 900); spawnPickup('ammo', 1260, 540);
-  }
-  function moveWithCollision(obj, dx, dy, r) {
-    const nx = clampWorld(obj.x + dx, obj.y, r).x;
-    if (!collidesBuilding(city, nx, obj.y, r)) obj.x = nx;
-    const ny = clampWorld(obj.x, obj.y + dy, r).y;
-    if (!collidesBuilding(city, obj.x, ny, r)) obj.y = ny;
-  }
-  function nearestCar(maxD) {
-    let best = null, bd = maxD;
-    for (const c of world.cars) {
-      if (c === world.car) continue;
-      const d = dist(world.player, c);
-      if (d < bd) { bd = d; best = c; }
-    }
-    return best;
-  }
-  function enterCar() {
-    const c = nearestCar(70);
-    if (!c) return false;
-    if (c.driver) { // steal it: the driver runs off, the cops notice
-      c.driver = false; addWanted(WANTED.steal);
-      world.message = 'Car stolen! The cops saw that.';
-      world.audio.crash();
-    }
-    world.inCar = true; world.car = c;
-    world.player.x = c.x; world.player.y = c.y;
-    return true;
-  }
-  function exitCar() {
-    if (!world.inCar || !world.car) return;
-    const c = world.car;
-    world.player.x = c.x + 40; world.player.y = c.y + 30;
-    world.inCar = false; world.car = null;
-  }
-  function shootAt(tx, ty) {
-    const p = world.player;
-    if (p.fireCooldown > 0 || p.ammo <= 0) return;
-    p.fireCooldown = PLAYER.fireRate; p.ammo -= 1;
-    p.angle = angleTo(p, { x: tx, y: ty });
-    world.bullets.push({ x: p.x, y: p.y, angle: p.angle, speed: 900, fromPlayer: true, life: 0.9 });
-    world.audio.shoot();
-    if (world.wanted < 1) addWanted(WANTED.shoot);
-  }
-  function punch() {
-    const p = world.player;
-    if (p.fireCooldown > 0) return;
-    p.fireCooldown = 0.35;
-    world.audio.punch();
-    const targets = [...world.enemies, ...world.peds.filter((q) => q.alive)];
-    for (const t of targets) {
-      if (dist(p, t) < 52 && Math.abs(((angleTo(p, t) - p.angle + Math.PI * 3) % (Math.PI * 2)) - Math.PI) < 1.1) {
-        if (t.health !== undefined) { t.health -= PLAYER.punchDamage; addEffect(t.x, t.y, 'hit'); if (t.health <= 0) killEnemy(t); }
-        else { t.alive = false; addWanted(WANTED.hitPed); addEffect(t.x, t.y, 'hit'); }
+      if (police) {
+        var bar = box(3, 0.6, 1.2, '#e5534b', 0, 3.2, -0.4); g.add(bar);
+        var bar2 = box(3, 0.6, 1.2, '#4c6be8', 0, 3.2, 0.6); g.add(bar2);
+        g.userData.lightBar = [bar, bar2];
       }
+      g.userData.body = body;
+      scene.add(g); return g;
     }
-  }
-  function killEnemy(e) {
-    e.alive = false; missions.defeated += 1; world.money += 120;
-    addEffect(e.x, e.y, 'down'); world.audio.cash();
-    if (world.wanted < 2) addWanted(1);
-  }
-  function updateTraffic(dt) {
-    for (const c of world.cars) {
-      if (c === world.car) continue;
-      // Drive along its road; at an intersection, sometimes turn.
-      const speed = c.speed * dt;
-      c.x += Math.cos(c.angle) * speed; c.y += Math.sin(c.angle) * speed;
-      if (c.x < 60 || c.x > WORLD.width - 60 || c.y < 60 || c.y > WORLD.height - 640) {
-        c.angle += Math.PI; // turn around at the edge
-        c.x = Math.max(60, Math.min(WORLD.width - 60, c.x));
-        c.y = Math.max(60, Math.min(WORLD.height - 640, c.y));
-      }
-      // Near an intersection, occasionally turn onto the cross road.
-      const onX = ROADS_X.some((rx) => Math.abs(c.x - rx) < 8);
-      const onY = ROADS_Y.some((ry) => Math.abs(c.y - ry) < 8);
-      if (onX && onY && random.chance(0.02)) c.angle += random.pick([-Math.PI / 2, Math.PI / 2]);
-      if (collidesBuilding(city, c.x, c.y, 20)) c.angle += Math.PI / 2;
+    function makePersonMesh(shirt, pants) {
+      var g = new THREE.Group();
+      var legs = box(1.6, 1.6, 0.9, pants || '#2b2f38', 0, 0.8, 0);
+      var torso = box(1.8, 2, 1, shirt, 0, 2.6, 0);
+      var head = new THREE.Mesh(new THREE.SphereGeometry(0.85, 10, 10),
+        new THREE.MeshLambertMaterial({ color: 0xd9a06b }));
+      head.position.set(0, 4.3, 0); head.castShadow = true;
+      var armL = box(0.6, 1.8, 0.6, shirt, -1.2, 2.6, 0);
+      var armR = box(0.6, 1.8, 0.6, shirt, 1.2, 2.6, 0);
+      g.add(legs); g.add(torso); g.add(head); g.add(armL); g.add(armR);
+      g.userData.legs = legs; g.userData.armL = armL; g.userData.armR = armR;
+      scene.add(g); return g;
     }
-  }
-  function updatePeds(dt) {
-    for (const p of world.peds) {
-      if (!p.alive) continue;
-      p.walkPhase += dt * 6;
-      if (p.flee > 0) {
-        p.flee -= dt;
-        p.x += Math.cos(p.angle) * 190 * dt; p.y += Math.sin(p.angle) * 190 * dt;
-      } else {
-        if (random.chance(0.005)) p.angle = random.range(0, Math.PI * 2);
-        p.x += Math.cos(p.angle) * p.speed * dt; p.y += Math.sin(p.angle) * p.speed * dt;
-      }
-      const cl = clampWorld(p.x, p.y, 10); p.x = cl.x; p.y = cl.y;
-      if (collidesBuilding(city, p.x, p.y, 10)) p.angle += Math.PI / 2;
-      // Flee from gunfire and fast cars.
-      if (dist(p, world.player) < 160 && (world.player.fireCooldown > 0.2 || (world.inCar && Math.abs(world.car.speed) > 300))) {
-        p.flee = 1.5; p.angle = angleTo(world.player, p);
-      }
-    }
-  }
-  function updatePolice(dt) {
-    const want = Math.min(POLICE_MAX, Math.ceil(world.wanted));
-    while (world.police.length < want) {
-      const a = random.range(0, Math.PI * 2);
-      world.police.push(makeCar(world.player.x + Math.cos(a) * 700, world.player.y + Math.sin(a) * 700, true));
-    }
-    while (world.police.length > want) world.police.pop();
-    for (const cop of world.police) {
-      const target = world.inCar ? world.car : world.player;
-      const a = angleTo(cop, target);
-      let da = a - cop.angle;
-      while (da > Math.PI) da -= Math.PI * 2;
-      while (da < -Math.PI) da += Math.PI * 2;
-      cop.angle += Math.max(-2.4 * dt, Math.min(2.4 * dt, da));
-      // Police top out below a player's car (620), so a good driver can
-      // outrun a 1-star chase; ramming hurts, but slowly — a chase is a
-      // chase, not an execution. (An earlier 18/s ram killed the player
-      // inside one 18-second screenshot drive.)
-      cop.speed = Math.min(480, cop.speed + 300 * dt);
-      cop.x += Math.cos(cop.angle) * cop.speed * dt;
-      cop.y += Math.sin(cop.angle) * cop.speed * dt;
-      const cl = clampWorld(cop.x, cop.y, 20); cop.x = cl.x; cop.y = cl.y;
-      if (dist(cop, target) < 46) {
-        // Ram / arrest: damage the player, slow the car.
-        if (world.inCar) { world.car.health -= 3 * dt; world.car.speed *= 0.98; }
-        else { world.player.health -= 8 * dt; }
-        addEffect(target.x, target.y, 'hit');
-        if (world.player.health <= 0 || (world.inCar && world.car.health <= 0)) {
-          world.busted = true; world.over = true; world.audio.busted();
-        }
-      }
-      world.sirenTimer -= dt;
-      if (world.sirenTimer <= 0) { world.audio.siren(); world.sirenTimer = 1.4; }
-    }
-  }
-  function updateBullets(dt) {
-    for (const b of world.bullets) {
-      b.x += Math.cos(b.angle) * b.speed * dt;
-      b.y += Math.sin(b.angle) * b.speed * dt;
-      b.life -= dt;
-      if (collidesBuilding(city, b.x, b.y, 4)) { b.life = 0; addEffect(b.x, b.y, 'hit'); continue; }
-      if (b.fromPlayer) {
-        for (const e of world.enemies) {
-          if (e.alive && dist(b, e) < 22) { e.health -= PLAYER.shootDamage; b.life = 0; addEffect(e.x, e.y, 'hit'); if (e.health <= 0) killEnemy(e); break; }
-        }
-        for (const cop of world.police) {
-          if (b.life > 0 && dist(b, cop) < 26) { cop.health -= PLAYER.shootDamage; b.life = 0; addWanted(WANTED.killCop); if (cop.health <= 0) { cop.health = 100; world.police.splice(world.police.indexOf(cop), 1); } break; }
-        }
-      } else if (dist(b, world.player) < 18 && world.player.invulnerable <= 0) {
-        world.player.health -= 12; world.player.invulnerable = 0.6; b.life = 0; addEffect(world.player.x, world.player.y, 'hit');
-        if (world.player.health <= 0) { world.over = true; world.audio.busted(); }
-      }
-    }
-    world.bullets = world.bullets.filter((b) => b.life > 0 && b.x > 0 && b.x < WORLD.width && b.y > 0 && b.y < WORLD.height);
-  }
-  function updateEnemies(dt) {
-    for (const e of world.enemies) {
-      if (!e.alive) continue;
-      const a = angleTo(e, world.player);
-      e.angle = a;
-      if (dist(e, world.player) > 60) { e.x += Math.cos(a) * e.speed * dt; e.y += Math.sin(a) * e.speed * dt; }
-      e.fireCooldown -= dt;
-      if (e.fireCooldown <= 0 && dist(e, world.player) < 420) {
-        e.fireCooldown = 1.1;
-        world.bullets.push({ x: e.x, y: e.y, angle: a + random.range(-0.15, 0.15), speed: 620, fromPlayer: false, life: 1.2 });
-        world.audio.shoot();
-      }
-    }
-    world.enemies = world.enemies.filter((e) => e.alive);
+    function makeEnemyMesh() { return makePersonMesh('#c23a3a', '#2b2b2b'); }
+
+    return {
+      scene: scene, camera: camera, renderer: renderer, sun: sun, smoke: smoke,
+      beacon: beacon, ring: ring, checkpoints: checkpoints, shells: shells,
+      collides: collides, nearestRoad: nearestRoad,
+      makeCarMesh: makeCarMesh, makePersonMesh: makePersonMesh, makeEnemyMesh: makeEnemyMesh,
+      resize: function () {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+      },
+      setQuality: function (q) {
+        renderer.shadowMap.enabled = q !== 'Low';
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, q === 'High' ? 2 : 1.25));
+      },
+      dispose: function () { renderer.dispose(); },
+    };
   }
 
-  // One fixed step. ctrl: {mx, my, run, aimX, aimY, shoot, enter, fight, interact}
-  function step(dt, ctrl) {
-    let events = 0;
-    world.elapsed += dt;
-    const p = world.player;
-    if (p.fireCooldown > 0) p.fireCooldown -= dt;
-    if (p.invulnerable > 0) p.invulnerable -= dt;
-    if (world.messageTime > 0) world.messageTime -= dt;
-    if (world.flash) {
-      world.flashTime = (world.flashTime === undefined ? 4 : world.flashTime) - dt;
-      if (world.flashTime <= 0) { world.flash = ''; world.flashTime = undefined; }
-    }
-
-    if (ctrl.enter) { if (world.inCar) exitCar(); else enterCar(); }
-    if (world.inCar && world.car) {
-      const c = world.car;
-      const forward = -ctrl.my; // W/up accelerates
-      if (forward > 0) c.speed = Math.min(CAR.maxSpeed, c.speed + CAR.accel * dt);
-      else if (forward < 0) c.speed = Math.max(-CAR.maxReverse, c.speed - CAR.reverseAccel * dt);
-      else c.speed *= Math.pow(0.4, dt);
-      if (Math.abs(c.speed) > 20) c.angle += ctrl.mx * CAR.turn * dt * Math.sign(c.speed) * Math.min(1, Math.abs(c.speed) / 240);
-      const nx = c.x + Math.cos(c.angle) * c.speed * dt, ny = c.y + Math.sin(c.angle) * c.speed * dt;
-      if (!collidesBuilding(city, nx, ny, 22)) { c.x = nx; c.y = ny; }
-      else {
-        // Bumping a wall scrubs speed instead of throwing the car into
-        // reverse (which made the autopilot oscillate into the same wall).
-        c.speed *= 0.5;
-        // Damage only once per half-second of scraping a wall, not per frame.
-        c.crashCooldown = (c.crashCooldown || 0) - dt;
-        if (c.crashCooldown <= 0) { c.health -= 3; c.crashCooldown = 0.5; world.audio.crash(); addEffect(c.x, c.y, 'hit'); }
-      }
-      const cl = clampWorld(c.x, c.y, 24); c.x = cl.x; c.y = cl.y;
-      p.x = c.x; p.y = c.y; p.angle = c.angle;
-      world.audio.setEngine(Math.abs(c.speed) / CAR.maxSpeed);
-      // Running over a pedestrian is a crime.
-      for (const ped of world.peds) {
-        if (ped.alive && dist(c, ped) < 30 && Math.abs(c.speed) > 120) {
-          ped.alive = false; addWanted(WANTED.hitPed); addEffect(ped.x, ped.y, 'hit'); world.audio.crash();
-        }
-      }
-      if (c.health <= 0) { exitCar(); world.cars.splice(world.cars.indexOf(c), 1); addEffect(c.x, c.y, 'down'); }
-    } else {
-      world.audio.setEngine(0);
-      const speed = ctrl.run ? PLAYER.runSpeed : PLAYER.walkSpeed;
-      if (ctrl.mx || ctrl.my) p.angle = Math.atan2(ctrl.my, ctrl.mx);
-      moveWithCollision(p, ctrl.mx * speed * dt, ctrl.my * speed * dt, PLAYER.radius);
-      if (ctrl.shoot) shootAt(ctrl.aimX, ctrl.aimY);
-      if (ctrl.fight) punch();
-    }
-    if (ctrl.interact) {
-      const near = world.pickups.find((pk) => dist(p, pk) < 60);
-      if (near) { world.pickups.splice(world.pickups.indexOf(near), 1); }
-    }
-    updateTraffic(dt); updatePeds(dt); updateBullets(dt); updateEnemies(dt);
-    if (world.wanted > 0) {
-      updatePolice(dt);
-      // Wanted decays only when no police can see the player.
-      const seen = world.police.some((cop) => dist(cop, world.player) < 500);
-      if (!seen) world.wanted = Math.max(0, world.wanted - WANTED.decay * dt);
-    } else world.police = [];
-    // Pickups: spawn cash/health/ammo around the player over time.
-    world.pickupTimer -= dt;
-    if (world.pickupTimer <= 0) {
-      world.pickupTimer = 9;
-      const kind = random.pick(['cash', 'cash', 'health', 'ammo']);
-      spawnPickup(kind, p.x + random.range(-400, 400), p.y + random.range(-300, 300));
-    }
-    for (const pk of [...world.pickups]) {
-      pk.t += dt;
-      if (dist(p, pk) < 40) {
-        world.pickups.splice(world.pickups.indexOf(pk), 1);
-        if (pk.kind === 'cash') { world.money += 80; world.audio.cash(); events |= EVENT_COIN; }
-        else if (pk.kind === 'health') { p.health = Math.min(PLAYER.health, p.health + 40); world.audio.pickup(); }
-        else { p.ammo = Math.min(PLAYER.maxAmmo, p.ammo + 12); world.audio.pickup(); }
-      }
-    }
-    for (const fx of world.effects) fx.t += dt;
-    world.effects = world.effects.filter((fx) => fx.t < 0.6);
-    missions.update(world, dt);
-    if (missions.done && !world.storyDone) world.storyDone = true;
-    if (p.health <= 0 && !world.over) { world.over = true; events |= EVENT_OVER; }
-    if (world.over) events |= EVENT_OVER;
-    if (world.busted) events |= EVENT_BUSTED;
-    return events;
-  }
-
-  // Attach the methods to the live world object itself (never a spread
-  // copy: the loop reads money, wanted and health off this same object).
-  world.spawnEnemies = spawnEnemies; world.save = save; world.load = load;
-  world.reset = reset; world.step = step; world.enterCar = enterCar;
-  world.exitCar = exitCar; world.shootAt = shootAt; world.punch = punch;
-  world.addWanted = addWanted; world.state = world;
-  reset();
-  return world;
-}
+  window.SB3World = { create: createWorld3D };
+})();

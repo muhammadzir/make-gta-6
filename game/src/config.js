@@ -1,74 +1,143 @@
-// Solmar Bay — tuning, palette and story data. All numbers in one place.
-// The world is a 3600x3000 open city; the camera follows the player and the
-// renderer scales the 1280x720 view to the window, so no rule below depends
-// on the screen size.
-export const WORLD = { width: 3600, height: 3000, road: 96, block: 264 };
-export const FIELD = { width: 1280, height: 720 };
-export const STEP = 1 / 60;
-export const SAVE_KEY = 'solmar-bay.save.v1';
-export const BEST_KEY = 'solmar-bay.best';
+// Solmar Bay 3D — configuration and story data. Everything here is original:
+// an invented coastal city on a volcanic island, invented people, places and
+// money. Nothing comes from Rockstar/GTA or any commercial game.
+(function () {
+  'use strict';
 
-export const PLAYER = {
-  radius: 14, walkSpeed: 230, runSpeed: 340, health: 100,
-  punchDamage: 20, shootDamage: 34, fireRate: 0.28, ammo: 24, maxAmmo: 48,
-};
-export const CAR = {
-  // Turn rate 3.4 at 540 top speed gives a ~160 px turning circle, tight
-  // enough to turn at a 96 px-wide intersection without sliding into the
-  // buildings on its corner; 2.6 at 620 gave a 238 px circle and the car
-  // scraped every corner it turned.
-  accel: 520, reverseAccel: 320, maxSpeed: 540, maxReverse: 220,
-  turn: 3.4, grip: 0.92, brake: 900, health: 200,
-};
-export const TRAFFIC_COUNT = 18;
-export const PED_COUNT = 28;
-export const POLICE_MAX = 6;
+  var WORLD = 1200; // world is WORLD x WORLD, centred on (0,0), ground y = 0
+  var ROAD_STEP = 150;
+  var ROADS = [-450, -300, -150, 0, 150, 300, 450];
 
-export const WANTED = {
-  decay: 0.012, // stars per second while unseen and not committing crimes
-  steal: 1, hitPed: 1, shoot: 1, killPed: 2, killCop: 2,
-};
+  // 7 districts, each with a standing score 0..100 and a state name.
+  var DISTRICTS = [
+    { id: 'downtown', name: 'Downtown', cx: 0, cz: 0, hw: 220, hd: 220, color: '#e8b64c' },
+    { id: 'marina', name: 'Marina', cx: -330, cz: 330, hw: 220, hd: 220, color: '#4cc2e8' },
+    { id: 'harbour', name: 'Old Harbour', cx: -330, cz: -330, hw: 220, hd: 220, color: '#8a7a5a' },
+    { id: 'coral', name: 'Coral Row', cx: -330, cz: 0, hw: 220, hd: 220, color: '#e87a9a' },
+    { id: 'lockup', name: 'North Lockup', cx: 0, cz: -330, hw: 220, hd: 220, color: '#9a8ae8' },
+    { id: 'beach', name: 'Bayfront Beach', cx: 330, cz: 330, hw: 220, hd: 220, color: '#f2d06b' },
+    { id: 'volcano', name: 'Volcano Ridge', cx: 330, cz: -330, hw: 220, hd: 220, color: '#e85a4c' },
+  ];
+  function districtAt(x, z) {
+    for (var i = 0; i < DISTRICTS.length; i++) {
+      var d = DISTRICTS[i];
+      if (Math.abs(x - d.cx) <= d.hw && Math.abs(z - d.cz) <= d.hd) return d;
+    }
+    return DISTRICTS[0];
+  }
+  function standingState(v) { return v >= 70 ? 'FRIENDLY' : v >= 40 ? 'NEUTRAL' : 'WARY'; }
 
-export const PALETTE = {
-  backdrop: '#0e1420', water: '#1d6f8f', sand: '#d9c27a', grass: '#3f7d4a',
-  park: '#2e6b3a', road: '#2b2f38', roadLine: '#c9a227', sidewalk: '#4a4f5a',
-  building: ['#7a5a8c', '#8c6a4a', '#4a7a8c', '#9c7a5a', '#5a6b8c', '#b08a4a'],
-  roof: ['#3a2f4a', '#4a3a2f', '#2f4a3a', '#5a4a2f'],
-  player: '#e8b23a', playerShirt: '#2f6fb2', cop: '#2b4a8c', copCar: '#e8e8e8',
-  car: ['#c23a3a', '#3a7ac2', '#c2a23a', '#3ac27a', '#8c3ac2', '#e8e8e8', '#2b2b2b'],
-  text: '#f2f0e8', muted: '#9aa3ad', gold: '#f2c94c', red: '#e5534b',
-  panel: 'rgba(16, 20, 32, 0.88)', hud: 'rgba(10, 14, 24, 0.72)',
-  marker: '#ffcf3a', health: '#4ac25a', wanted: '#ffcf3a',
-};
-export const FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif';
+  var RANKS = [
+    { name: 'STREET', rp: 0 }, { name: 'HUSTLER', rp: 100 }, { name: 'RUNNER', rp: 250 },
+    { name: 'FIXER', rp: 500 }, { name: 'ENFORCER', rp: 900 }, { name: 'KINGPIN', rp: 1400 },
+    { name: 'BAY LORD', rp: 2100 }, { name: 'LEGEND', rp: 3000 },
+  ];
+  function rankFor(rp) {
+    var r = RANKS[0], next = null;
+    for (var i = 0; i < RANKS.length; i++) {
+      if (rp >= RANKS[i].rp) r = RANKS[i];
+      else { next = RANKS[i]; break; }
+    }
+    return { rank: r, next: next };
+  }
 
-// The story: Rico Vale, a wheelman fresh out of Solmar Bay's north lockup,
-// owes the harbour crew and has one week to buy his sister's garage back.
-export const STORY = {
-  city: 'Solmar Bay',
-  hero: 'Rico Vale',
-  intro: 'Rico Vale is out of the north lockup and owes the harbour crew $40,000. One week to buy back his sister Lena’s garage — or lose it for good.',
-};
-export const MISSIONS = [
-  { id: 1, name: 'First Wheels', giver: 'Lena Vale', pay: 500,
-    brief: 'Lena needs a car, fast. Steal any parked or traffic car (E) and bring it to the garage on Marlin Street.',
-    done: 'Lena: "It runs! You still drive like you stole it — because you did."' },
-  { id: 2, name: 'Bayfront Pickup', giver: 'Marco Hale', pay: 900,
-    brief: 'Marco left a package at the marina pier. Pick it up on foot, then deliver it to the Coral Cafe on Solmar Avenue. Stay out of trouble.',
-    done: 'Marco: "Clean delivery. The crew is starting to trust you, Rico."' },
-  { id: 3, name: 'Harbor Heat', giver: 'Dana Cross', pay: 1500,
-    brief: 'The Tide Rats are shaking down the harbour. Take out 3 of their enforcers (F to fight, mouse to aim) — then lose the cops.',
-    done: 'Dana: "Harbour’s quiet tonight. That was you, wasn’t it?"' },
-  { id: 4, name: 'The Solmar Heist', giver: 'Lena Vale', pay: 4000,
-    brief: 'The big one: grab the cash from the Solmar Trust vault, then lose a 3-star wanted level and reach the hideout. This buys the garage back.',
-    done: 'Lena: "The garage is ours again. Solmar Bay is yours, Rico."' },
-];
-export const DISTRICTS = [
-  { name: 'North Lockup', x: 0, y: 0, w: 1200, h: 600 },
-  { name: 'Downtown', x: 1200, y: 0, w: 1200, h: 900 },
-  { name: 'Marlin Quarter', x: 2400, y: 0, w: 1200, h: 900 },
-  { name: 'Coral Row', x: 0, y: 900, w: 1200, h: 900 },
-  { name: 'Old Harbour', x: 1200, y: 900, w: 1200, h: 900 },
-  { name: 'Marina', x: 2400, y: 900, w: 1200, h: 900 },
-  { name: 'Bayfront Beach', x: 0, y: 1800, w: 3600, h: 1200 },
-];
+  // Crew: recruited by finishing missions, each with a real ability.
+  var CREW = [
+    { id: 'lena', name: 'Lena', role: 'Mechanic', loyalty: 80,
+      ability: 'Safehouse owner — heals you at home · +15% mission payouts', afterMission: 1,
+      desc: 'Runs Lena\'s Garage in Downtown. Fixes cars and pays better.' },
+    { id: 'dario', name: 'Dario', role: 'Getaway driver', loyalty: 65,
+      ability: 'Calls in a car with G · improves vehicle handling', afterMission: 2,
+      desc: 'Ex-race driver. Press G and he drops a fast car beside you.' },
+    { id: 'bram', name: 'Bram', role: 'Enforcer', loyalty: 70,
+      ability: 'Joins fights beside you · +10% damage', afterMission: 3,
+      desc: 'Big, quiet, loyal. Fights at your side when the shooting starts.' },
+  ];
+
+  var WEAPONS = [
+    { id: 'pistol', name: 'Pistol', slot: 1, damage: 34, rate: 0.32, range: 90, ammo: 60, price: 0, auto: false },
+    { id: 'smg', name: 'SMG', slot: 2, damage: 18, rate: 0.09, range: 70, ammo: 180, price: 1200, auto: true },
+    { id: 'shotgun', name: 'Shotgun', slot: 3, damage: 22, pellets: 6, rate: 0.9, range: 40, ammo: 40, price: 2000, auto: false },
+  ];
+
+  // Story: 3 acts, 6 missions. Objectives use a small generic language:
+  // goto (reach a point), talk (press E at a point), kill (defeat N gang),
+  // race (hit checkpoints in order, timed), escape (get wanted to 0).
+  // Each mission pays out on completion.
+  var MISSIONS = [
+    { id: 'm1', act: 1, title: 'First Wheels', giver: 'Lena', payout: 500, rp: 100,
+      brief: 'Rico Vale owes the harbour crew $40,000. Lena needs wheels first: steal a car and bring it to her garage.',
+      objectives: [
+        { type: 'goto', label: 'Steal a car (press F near one)', x: -300, z: 150, needCar: true },
+        { type: 'goto', label: 'Drive to Lena\'s Garage', x: 60, z: -60, needCar: true },
+      ] },
+    { id: 'm2', act: 1, title: 'Bayfront Pickup', giver: 'Vera', payout: 900, rp: 150,
+      brief: 'Vera has a package waiting at the Marina boatyard. Pick it up and take it to the Coral Cafe — no police.',
+      objectives: [
+        { type: 'goto', label: 'Go to Harbor Boatworks, Marina', x: -380, z: 380 },
+        { type: 'talk', label: 'Pick up the package (press E)', x: -380, z: 380 },
+        { type: 'goto', label: 'Deliver to Coral Cafe', x: -330, z: 30 },
+      ] },
+    { id: 'm3', act: 2, title: 'The Widow\'s Price', giver: 'Vera', payout: 1500, rp: 200,
+      brief: 'The Widow\'s crew, the Ember Rats, are collecting on the harbour. Put three of them down, then lose the cops.',
+      objectives: [
+        { type: 'kill', label: 'Defeat the Ember Rats (0/3)', x: -330, z: -330, count: 3 },
+        { type: 'escape', label: 'Lose the police (wanted to 0)' },
+      ] },
+    { id: 'm4', act: 2, title: 'The Lantern Run', giver: 'Dario', payout: 2000, rp: 250,
+      brief: 'Dario bets you cannot win the Lantern Run. Five checkpoints, one fast car, no shortcuts through the beach.',
+      objectives: [
+        { type: 'race', label: 'Win the Lantern Run — hit the checkpoints', x: 0, z: 0 },
+      ] },
+    { id: 'm5', act: 3, title: 'The Solmar Vault', giver: 'Vera', payout: 4000, rp: 400,
+      brief: 'The harbour crew\'s money sits in the Solmar Vault, Downtown. Grab it and get out at 3 stars.',
+      objectives: [
+        { type: 'goto', label: 'Reach the Solmar Vault', x: 225, z: 225 },
+        { type: 'talk', label: 'Crack the vault (press E)', x: 225, z: 225 },
+        { type: 'goto', label: 'Escape to the Hideout, Marina', x: -420, z: 420 },
+      ] },
+    { id: 'm6', act: 3, title: 'The Solmar Accord', giver: 'Lena', payout: 6000, rp: 500,
+      brief: 'One last job. Meet Vera at the Hideout, survive the Widow\'s ambush, and the $40,000 debt is wiped clean.',
+      objectives: [
+        { type: 'goto', label: 'Meet Vera at the Hideout', x: -420, z: 420 },
+        { type: 'kill', label: 'Survive the ambush (0/4)', x: -420, z: 420, count: 4 },
+        { type: 'talk', label: 'Seal the accord (press E)', x: -420, z: 420 },
+      ] },
+  ];
+
+  var RACES = [
+    { id: 'r1', name: 'Lantern Run', prize: 800, cps: [[-300, -300], [0, -300], [300, -300], [300, 0], [0, 300]] },
+    { id: 'r2', name: 'Marina Sprint', prize: 1000, cps: [[-450, 450], [-150, 450], [150, 450], [450, 300], [450, 0]] },
+    { id: 'r3', name: 'Volcano Loop', prize: 1400, cps: [[450, -450], [150, -450], [-150, -450], [-450, -150], [0, 0]] },
+    { id: 'r4', name: 'Beach Dash', prize: 1200, cps: [[-450, 300], [-150, 150], [150, 150], [450, 150], [300, 450]] },
+  ];
+
+  var JUMPS = [ // stunt jump ramps: position + facing angle
+    { x: -150, z: 0, a: 0 }, { x: 150, z: -150, a: 1.57 }, { x: 0, z: 300, a: 0 },
+    { x: -300, z: 300, a: 3.14 }, { x: 300, z: 150, a: -1.57 }, { x: -450, z: -150, a: 0 },
+    { x: 150, z: 450, a: 3.14 }, { x: 450, z: -300, a: 1.57 },
+  ];
+
+  var EXPORT_CARS = [ // deliver a car of this colour to the boatyard
+    { color: '#c23a3a', name: 'Red Comet', done: false },
+    { color: '#3a7ac2', name: 'Blue Marlin', done: false },
+    { color: '#e8b64c', name: 'Gold Runner', done: false },
+    { color: '#7ac23a', name: 'Green Gecko', done: false },
+    { color: '#c23a9a', name: 'Pink Flamingo', done: false },
+  ];
+
+  var SHOPS = [
+    { id: 'arms', name: 'Bram\'s Arms', x: 225, z: -75, kind: 'weapons', blurb: 'Weapons and ammo. Pistol free, SMG $1,200, Shotgun $2,000.' },
+    { id: 'respray', name: 'Sol Respray', x: -225, z: 75, kind: 'respray', blurb: 'Respray your car any colour — $300.' },
+    { id: 'boatyard', name: 'Harbor Boatworks', x: -380, z: 380, kind: 'export', blurb: 'Deliver export cars here. Also the race and job board.' },
+    { id: 'garage', name: 'Lena\'s Garage', x: 60, z: -60, kind: 'garage', blurb: 'Safehouse. Heal here, save your game.' },
+    { id: 'cafe', name: 'Coral Cafe', x: -330, z: 30, kind: 'cafe', blurb: 'Quiet corner of Coral Row. Vera leaves jobs here.' },
+  ];
+
+  window.SB3 = {
+    WORLD: WORLD, ROAD_STEP: ROAD_STEP, ROADS: ROADS,
+    DISTRICTS: DISTRICTS, districtAt: districtAt, standingState: standingState,
+    RANKS: RANKS, rankFor: rankFor, CREW: CREW, WEAPONS: WEAPONS,
+    MISSIONS: MISSIONS, RACES: RACES, JUMPS: JUMPS, EXPORT_CARS: EXPORT_CARS, SHOPS: SHOPS,
+  };
+})();

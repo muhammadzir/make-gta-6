@@ -4,11 +4,14 @@
 // request), and the program hands it in. It copies game/ and screenshots/
 // from beside this file to /output and writes /output/dossier.json, the
 // summary the judge reads, with the vendored make.fun library. The game
-// itself is an original top-down open-world crime game: Rico Vale drives
-// and walks a 3600x3000 city, steals cars, runs four story missions,
+// itself is an original 3D third-person open-world crime game, rebuilt
+// in v2 on Three.js (vendored locally under game/vendor/): Rico Vale walks
+// and drives a sunset volcanic island city, steals cars, runs six story
+// missions across three acts, recruits a crew, raises district standing,
 // earns a wanted level and loses the Solmar Bay PD, with traffic,
-// pedestrians, combat, a HUD with a live minimap, synthesized sound and
-// a save in localStorage. Nothing in it comes from any commercial game.
+// pedestrians, combat, races, collectibles, a HUD with a circular minimap,
+// synthesized sound and saves in localStorage. Nothing in it comes from
+// any commercial game.
 //
 // Serve it locally with `node serve.ts`, then open http://localhost:8080.
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
